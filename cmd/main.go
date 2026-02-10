@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
+	"time"
 
 	exchangehandler "github.com/sulte4/marketflow/internal/adapters/exchangeHandler"
 	"github.com/sulte4/marketflow/internal/domain/model"
@@ -12,10 +14,23 @@ import (
 )
 
 type batchedData struct{
-	Min float64
-	Max float64
+	Min float32
+	Max float32
 	Sum float64
 	Count int
+	Source string
+}
+func (v *batchedData) Calculation(exchange model.Exchange){
+	v.Count++
+	v.Min = min(v.Min, exchange.Price)
+	v.Max = max(v.Max, exchange.Price)
+	v.Sum += float64(exchange.Price)
+}
+func (v *batchedData) Reset(){
+	v.Min = math.MaxFloat32 
+	v.Max = -math.MaxFloat32
+	v.Count = 0
+	v.Sum = 0
 }
 
 func main() {
@@ -26,48 +41,40 @@ func main() {
 		return 
 	}
 	
-	outs := make([]chan []model.Exchange, 3)
+	resultCh := make(chan model.Exchange)
+	sources := make([]chan []model.Exchange, 3)
 	for i, exch := range cfg.Exchanges{
-		out := make(chan []model.Exchange)
-		outs[i] = out
+		source := make(chan []model.Exchange)
+		sources[i] = source
 		go func (){
-			err := exchangehandler.ConnExchange(ctx, out, exch)
+			err := exchangehandler.ConnExchange(ctx, source, exch)
 			if err != nil {
 				slog.Error(err.Error())
 			}
 		}()
+	}	
+	
+	outs := make([]chan model.Exchange, 0, 15)
+	for _, source := range sources{
+		chs := fanOut(ctx, source, 5)
+		outs = append(outs, chs...)	
 	}
-	wg := &sync.WaitGroup{}
-	for _, out := range outs{
-		wg.Add(1)
-		go func(){
-			for {
+	fanIn(ctx, outs, resultCh)
 
-				fmt.Println(<-out)
-			}
-		}()
-	}
-	wg.Wait()
+	
 }
 
-func fanOut(in <-chan model.Exchange, n int) []chan model.Exchange{
+func fanOut(ctx context.Context, in <-chan []model.Exchange, n int) []chan model.Exchange{
 	outs := make([]chan model.Exchange, n)
 	for i := range n{
 		out := make(chan model.Exchange)
 		outs[i] = out
-
-		go func(){
-			defer close(out)
-			for val := range in{
-				out <- val
-			}
-		}()
+		go worker(ctx, in, out, i)
 	}
 	return outs
 }
 
-func fanIn(ctx context.Context, chans []chan model.Exchange) chan model.Exchange{
-	out := make(chan model.Exchange)
+func fanIn(ctx context.Context, chans []chan model.Exchange, res chan model.Exchange) {
 
 	go func(){
 		wg := &sync.WaitGroup{}
@@ -82,7 +89,7 @@ func fanIn(ctx context.Context, chans []chan model.Exchange) chan model.Exchange
 							return
 						}
 						select{
-						case out <- v:
+						case res <- v:
 						case <- ctx.Done():
 							return
 						}
@@ -94,11 +101,31 @@ func fanIn(ctx context.Context, chans []chan model.Exchange) chan model.Exchange
 			}(ch)
 		}
 		wg.Wait()
-		close(out)
+		close(res)
 	}()
 
-	return out
 }
-// func worker(in <- chan []model.Exchange, out chan <- []model.Exchange){
 
-// }
+func worker(ctx context.Context, in <-chan []model.Exchange, out chan<- model.Exchange, pairIndex int){
+	batched := batchedData{}
+	ticker := time.NewTicker(time.Minute * 1)
+	defer close(out)
+	for{
+		select {
+		case pair, ok := <- in:
+			if !ok{
+				slog.Info("worker stopped due channel close")
+				return
+			}
+			batched.Calculation(pair[pairIndex])
+			//adding to redis
+		case <- ticker.C:
+			//adding to postgres
+			fmt.Println("adding to postgres",batched)
+			batched.Reset()
+		case <- ctx.Done():	
+			ticker.Stop()
+			return	
+		}
+	}
+}
