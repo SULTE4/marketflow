@@ -1,0 +1,7 @@
+*.exe
+
+.env
+
+todo
+notes
+cmd/task.go
