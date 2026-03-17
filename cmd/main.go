@@ -2,130 +2,108 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"flag"
 	"fmt"
 	"log/slog"
-	"math"
-	"sync"
+	"net/http"
+	"os"
 	"time"
 
-	exchangehandler "github.com/sulte4/marketflow/internal/adapters/exchangeHandler"
-	"github.com/sulte4/marketflow/internal/domain/model"
-	"github.com/sulte4/marketflow/pkg/config"
-)
+	"github.com/redis/go-redis/v9"
 
-type batchedData struct{
-	Min float32
-	Max float32
-	Sum float64
-	Count int
-	Source string
-}
-func (v *batchedData) Calculation(exchange model.Exchange){
-	v.Count++
-	v.Min = min(v.Min, exchange.Price)
-	v.Max = max(v.Max, exchange.Price)
-	v.Sum += float64(exchange.Price)
-}
-func (v *batchedData) Reset(){
-	v.Min = math.MaxFloat32 
-	v.Max = -math.MaxFloat32
-	v.Count = 0
-	v.Sum = 0
-}
+	"github.com/sulte4/marketflow/internal/adapters/primary/web"
+	exchangehandler "github.com/sulte4/marketflow/internal/adapters/secondary/exchangeHandler"
+	"github.com/sulte4/marketflow/internal/adapters/secondary/postgres"
+	"github.com/sulte4/marketflow/internal/adapters/secondary/redisadapter"
+	"github.com/sulte4/marketflow/internal/core/service"
+	"github.com/sulte4/marketflow/internal/ports"
+	"github.com/sulte4/marketflow/pkg/config"
+
+	_ "github.com/lib/pq"
+)
 
 func main() {
 	ctx := context.Background()
-	cfg, err:= config.LoadConfig()
+	cfg, err := config.LoadConfig()
 	if err != nil {
 		slog.Error(err.Error())
-		return 
+		return
 	}
-	
-	resultCh := make(chan model.Exchange)
-	sources := make([]chan []model.Exchange, 3)
-	for i, exch := range cfg.Exchanges{
-		source := make(chan []model.Exchange)
-		sources[i] = source
-		go func (){
-			err := exchangehandler.ConnExchange(ctx, source, exch)
-			if err != nil {
-				slog.Error(err.Error())
-			}
-		}()
-	}	
-	
-	outs := make([]chan model.Exchange, 0, 15)
-	for _, source := range sources{
-		chs := fanOut(ctx, source, 5)
-		outs = append(outs, chs...)	
+	addr := flag.String("port", cfg.Addr, "Port number.")
+	help := flag.Bool("help", false, "Show this screen.")
+
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "\n")
+		fmt.Fprintf(os.Stderr, "Usage:\n")
+		fmt.Fprintf(os.Stderr, "  marketflow [--port <N>]\n")
+		fmt.Fprintf(os.Stderr, "  marketflow --help\n\n")
+		fmt.Fprintf(os.Stderr, "Options:\n")
+		fmt.Fprintf(os.Stderr, "  --port N     Port number\n")
 	}
-	fanIn(ctx, outs, resultCh)
 
-	
-}
+	flag.Parse()
 
-func fanOut(ctx context.Context, in <-chan []model.Exchange, n int) []chan model.Exchange{
-	outs := make([]chan model.Exchange, n)
-	for i := range n{
-		out := make(chan model.Exchange)
-		outs[i] = out
-		go worker(ctx, in, out, i)
+	if *help {
+		flag.Usage()
+		os.Exit(0)
 	}
-	return outs
-}
 
-func fanIn(ctx context.Context, chans []chan model.Exchange, res chan model.Exchange) {
+	exchanges := make([]ports.ExchangeSource, len(cfg.Exchanges))
+	for index, exch := range cfg.Exchanges {
+		exchanges[index] = exchangehandler.NewSource(exch)
+	}
 
-	go func(){
-		wg := &sync.WaitGroup{}
-		for _, ch := range chans{
-			wg.Add(1)
-			go func(ch chan model.Exchange) {
-				defer wg.Done()
-				for{
-					select{
-					case v, ok := <- ch:
-						if !ok{
-							return
-						}
-						select{
-						case res <- v:
-						case <- ctx.Done():
-							return
-						}
-					case <- ctx.Done():
-						return
-					}
-				}
-
-			}(ch)
+	db, err := sql.Open("postgres", fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName))
+	if err != nil {
+		slog.Error("Failed to connect to PostgreSQL", "error", err)
+		return
+	}
+	defer db.Close()
+	for i := 0; i < 5; i++ {
+		if err := db.PingContext(ctx); err != nil {
+			slog.Error("Failed to connect to PostgreSQL, retrying...", "error", err, "attempt", i+1)
+		} else {
+			slog.Info("Successfully connected to PostgreSQL")
+			break
 		}
-		wg.Wait()
-		close(res)
+	}
+
+	rdsAddr := fmt.Sprintf("%s:%s", cfg.RedisHost, cfg.RedisPort)
+	rdb := redis.NewClient(&redis.Options{Addr: rdsAddr})
+	for i := 0; i < 5; i++ {
+		if err := rdb.Ping(ctx).Err(); err != nil {
+			slog.Error("Failed to connect to Redis, retrying...", "error", err, "attempt", i+1)
+		} else {
+			slog.Info("Successfully connected to Redis")
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	defer func() {
+		if err := rdb.Close(); err != nil {
+			slog.Error("Failed to close Redis client", "error", err)
+		}
 	}()
 
-}
+	cache := redisadapter.New(rdb)
+	repo := postgres.NewRepository(db)
 
-func worker(ctx context.Context, in <-chan []model.Exchange, out chan<- model.Exchange, pairIndex int){
-	batched := batchedData{}
-	ticker := time.NewTicker(time.Minute * 1)
-	defer close(out)
-	for{
-		select {
-		case pair, ok := <- in:
-			if !ok{
-				slog.Info("worker stopped due channel close")
-				return
-			}
-			batched.Calculation(pair[pairIndex])
-			//adding to redis
-		case <- ticker.C:
-			//adding to postgres
-			fmt.Println("adding to postgres",batched)
-			batched.Reset()
-		case <- ctx.Done():	
-			ticker.Stop()
-			return	
-		}
+	marketProcessor := service.NewMarketProcessor(exchanges, cache, repo)
+	go marketProcessor.Start(ctx)
+
+	marketService := service.New(repo, cache, exchanges)
+
+	handler := web.NewHandler(marketService)
+	routes := web.New(handler)
+
+	srv := http.Server{
+		Addr:    fmt.Sprintf(":%s", *addr),
+		Handler: routes,
+	}
+
+	slog.Info("Server starting")
+	if err = srv.ListenAndServe(); err != nil {
+		slog.Error("failed to start server", "error", err.Error())
 	}
 }
