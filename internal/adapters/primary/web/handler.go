@@ -2,6 +2,8 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -25,17 +27,38 @@ func NewHandler(marketservice ports.MarketService) *Handler {
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
+	slog.Info("health check requested",
+		slog.String("method", r.Method),
+		slog.String("path", r.URL.Path),
+		slog.String("remote_addr", r.RemoteAddr))
+	w.WriteHeader(http.StatusOK)
 }
 
 func (h *Handler) HandleLatestPrice(w http.ResponseWriter, r *http.Request) {
 	symbol := r.PathValue("symbol")
 	exchange := r.PathValue("exchange")
+
+	slog.Info("latest price request received",
+		slog.String("symbol", symbol),
+		slog.String("exchange", exchange),
+		slog.String("method", r.Method),
+		slog.String("path", r.URL.Path))
+
 	ticker, err := h.marketService.GetLatestPrice(r.Context(), exchange, symbol)
 	if err != nil {
+		slog.Error("failed to get latest price",
+			slog.String("symbol", symbol),
+			slog.String("exchange", exchange),
+			slog.String("error", err.Error()))
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+
 	response := TickerResponse{Symbol: symbol, Source: exchange, Price: ticker.Price, Timestamp: time.UnixMilli(ticker.Timestamp)}
+	slog.Info("latest price request completed",
+		slog.String("symbol", symbol),
+		slog.String("exchange", exchange),
+		slog.Float64("price", float64(ticker.Price)))
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -43,16 +66,35 @@ func (h *Handler) HandleHighestPrice(w http.ResponseWriter, r *http.Request) {
 	symbol := r.PathValue("symbol")
 	exchange := r.PathValue("exchange")
 	period := r.URL.Query().Get("period")
-	duration, err := time.ParseDuration(period)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, domain.ErrInvalidInput.Error())
-	}
+
+	slog.Info("highest price request received",
+		slog.String("symbol", symbol),
+		slog.String("exchange", exchange),
+		slog.String("period", period),
+		slog.String("method", r.Method))
+
+	duration, _ := time.ParseDuration(period)
+
 	price, err := h.marketService.GetHighestPrice(r.Context(), exchange, symbol, int64(duration.Seconds()))
 	if err != nil {
+		if errors.Is(err, domain.ErrNoData) {
+			writeJSON(w, http.StatusOK, nil)
+			return
+		}
+		slog.Error("failed to get highest price",
+			slog.String("symbol", symbol),
+			slog.String("exchange", exchange),
+			slog.Int64("period_seconds", int64(duration.Seconds())),
+			slog.String("error", err.Error()))
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+
 	response := TickerResponse{Symbol: symbol, Source: exchange, Price: price}
+	slog.Info("highest price request completed",
+		slog.String("symbol", symbol),
+		slog.String("exchange", exchange),
+		slog.Float64("price", float64(price)))
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -60,16 +102,35 @@ func (h *Handler) HandleLowestPrice(w http.ResponseWriter, r *http.Request) {
 	symbol := r.PathValue("symbol")
 	exchange := r.PathValue("exchange")
 	period := r.URL.Query().Get("period")
-	duration, err := time.ParseDuration(period)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, domain.ErrInvalidInput.Error())
-	}
+
+	slog.Info("lowest price request received",
+		slog.String("symbol", symbol),
+		slog.String("exchange", exchange),
+		slog.String("period", period),
+		slog.String("method", r.Method))
+
+	duration, _ := time.ParseDuration(period)
+
 	price, err := h.marketService.GetLowestPrice(r.Context(), exchange, symbol, int64(duration.Seconds()))
 	if err != nil {
+		if errors.Is(err, domain.ErrNoData) {
+			writeJSON(w, http.StatusOK, nil)
+			return
+		}
+		slog.Error("failed to get lowest price",
+			slog.String("symbol", symbol),
+			slog.String("exchange", exchange),
+			slog.Int64("period_seconds", int64(duration.Seconds())),
+			slog.String("error", err.Error()))
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+
 	response := TickerResponse{Symbol: symbol, Source: exchange, Price: price}
+	slog.Info("lowest price request completed",
+		slog.String("symbol", symbol),
+		slog.String("exchange", exchange),
+		slog.Float64("price", float64(price)))
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -77,28 +138,60 @@ func (h *Handler) HandleAveragePrice(w http.ResponseWriter, r *http.Request) {
 	symbol := r.PathValue("symbol")
 	exchange := r.PathValue("exchange")
 	period := r.URL.Query().Get("period")
-	duration, err := time.ParseDuration(period)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, domain.ErrInvalidInput.Error())
-	}
+
+	slog.Info("average price request received",
+		slog.String("symbol", symbol),
+		slog.String("exchange", exchange),
+		slog.String("period", period),
+		slog.String("method", r.Method))
+
+	duration, _ := time.ParseDuration(period)
 
 	price, err := h.marketService.GetAveragePrice(r.Context(), exchange, symbol, int64(duration.Seconds()))
 	if err != nil {
+		if errors.Is(err, domain.ErrNoData) {
+			writeJSON(w, http.StatusOK, nil)
+			return
+		}
+		slog.Error("failed to get average price",
+			slog.String("symbol", symbol),
+			slog.String("exchange", exchange),
+			slog.Int64("period_seconds", int64(duration.Seconds())),
+			slog.String("error", err.Error()))
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+
 	response := TickerResponse{Symbol: symbol, Source: exchange, Price: price}
+	slog.Info("average price request completed",
+		slog.String("symbol", symbol),
+		slog.String("exchange", exchange),
+		slog.Float64("price", float64(price)))
 	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *Handler) HandleModeTest(w http.ResponseWriter, r *http.Request) {
-	// Логика переключения на тестовый режим
+	slog.Info("switching to test mode",
+		slog.String("method", r.Method),
+		slog.String("path", r.URL.Path),
+		slog.String("remote_addr", r.RemoteAddr))
+
+	h.marketService.ModeTest()
+
+	slog.Info("test mode activated")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status": "test mode activated"}`))
 }
 
 func (h *Handler) HandleModeLive(w http.ResponseWriter, r *http.Request) {
-	// Логика переключения на live режим
+	slog.Info("switching to live mode",
+		slog.String("method", r.Method),
+		slog.String("path", r.URL.Path),
+		slog.String("remote_addr", r.RemoteAddr))
+
+	h.marketService.ModeLive()
+
+	slog.Info("live mode activated")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status": "live mode activated"}`))
 }
