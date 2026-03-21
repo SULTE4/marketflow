@@ -27,7 +27,7 @@ func NewSource(port string) *Source {
 func (s *Source) Dial() error {
 	slog.Info("attempting to connect to exchange source",
 		slog.String("port", s.Port))
-	
+
 	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%s", s.Port))
 	if err != nil {
 		slog.Error("connection failed to source",
@@ -38,11 +38,11 @@ func (s *Source) Dial() error {
 
 	s.Conn = conn
 	s.Name = getExchangeName(s.Port)
-	
+
 	slog.Info("successfully connected to exchange source",
 		slog.String("exchange", s.Name),
 		slog.String("port", s.Port))
-	
+
 	return nil
 }
 
@@ -50,7 +50,7 @@ func (s *Source) Stream(ctx context.Context, out chan<- domain.Ticker) error {
 	slog.Info("starting stream from exchange",
 		slog.String("exchange", s.Name),
 		slog.String("port", s.Port))
-	
+
 	scanner := bufio.NewScanner(s.Conn)
 
 	for scanner.Scan() {
@@ -102,18 +102,27 @@ func (s *Source) SourceName() string {
 }
 
 func (s *Source) Close() error {
+	// Guard against exchanges that never successfully dialled.  Dial() sets
+	// s.Conn; if it was never called or returned an error, Conn is nil and
+	// calling Close() on it would panic.
+	if s.Conn == nil {
+		slog.Info("no active connection to close, skipping",
+			slog.String("exchange", s.Name),
+			slog.String("port", s.Port))
+		return nil
+	}
+
 	slog.Info("closing connection to exchange source",
 		slog.String("exchange", s.Name),
 		slog.String("port", s.Port))
-	
-	err := s.Conn.Close()
-	if err != nil {
+
+	if err := s.Conn.Close(); err != nil {
 		slog.Error("failed to close connection",
 			slog.String("exchange", s.Name),
 			slog.String("error", err.Error()))
 		return err
 	}
-	
+
 	slog.Info("connection closed successfully",
 		slog.String("exchange", s.Name))
 	return nil
