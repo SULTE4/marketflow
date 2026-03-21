@@ -21,6 +21,7 @@ type Source struct {
 func NewSource(port string) *Source {
 	return &Source{
 		Port: port,
+		Name: getExchangeName(port),
 	}
 }
 
@@ -37,7 +38,6 @@ func (s *Source) Dial() error {
 	}
 
 	s.Conn = conn
-	s.Name = getExchangeName(s.Port)
 
 	slog.Info("successfully connected to exchange source",
 		slog.String("exchange", s.Name),

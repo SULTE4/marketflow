@@ -11,6 +11,11 @@ import (
 	"github.com/sulte4/marketflow/internal/ports"
 )
 
+const (
+	initialReconnectDelay = 1 * time.Second
+	maxReconnectDelay     = 30 * time.Second
+)
+
 type MarketProcessor struct {
 	sources []ports.ExchangeSource
 	cache   ports.TickerCache
@@ -25,7 +30,7 @@ func NewMarketProcessor(sources []ports.ExchangeSource, cache ports.TickerCache,
 	}
 }
 
-// Start dials every exchange, launches the streaming pipeline, and blocks until
+// Start launches the streaming pipeline for every exchange and blocks until
 // every goroutine in the pipeline has fully exited.  The caller controls
 // shutdown by cancelling ctx and (importantly) closing the underlying exchange
 // TCP connections so that the blocking bufio.Scanner.Scan() calls unblock.
@@ -33,7 +38,7 @@ func NewMarketProcessor(sources []ports.ExchangeSource, cache ports.TickerCache,
 // Shutdown propagation chain:
 //
 //	ctx cancelled + exchange.Close()
-//	  → Stream() returns → defer close(in)
+//	  → streamWithReconnect detects ctx.Done(), exits → defer close(in)
 //	  → fanOut for-range exits → defer closes worker channels + workerWg.Wait()
 //	  → workers complete final saves → workerWg.Done()
 //	  → close(workersResult)
@@ -45,40 +50,18 @@ func (mp *MarketProcessor) Start(ctx context.Context) {
 		slog.Int("num_sources", len(mp.sources)))
 
 	// Use len(mp.sources) — not a hardcoded 3 — so the slice is always the
-	// right size.  Exchanges that fail Dial() leave their slot as nil; fanIn
-	// handles nil channels gracefully.
+	// right size.  Every exchange gets a streamWithReconnect goroutine and a
+	// corresponding fanOut, so no slots will be nil.
 	workersResults := make([]chan domain.AggregatedTicker, len(mp.sources))
 
 	for index, exch := range mp.sources {
-		err := exch.Dial()
-		if err != nil {
-			slog.Error("connection failed to source",
-				slog.Int("source_index", index),
-				slog.String("error", err.Error()))
-			continue
-		}
-
 		in := make(chan domain.Ticker)
 
-		// The stream goroutine is the sole writer of `in`.  It MUST close `in`
-		// when it exits so that fanOut's for-range loop terminates and the rest
-		// of the shutdown chain can proceed.
-		go func(exch ports.ExchangeSource, in chan domain.Ticker) {
-			defer func() {
-				slog.Info("stream goroutine exiting, closing ticker channel",
-					slog.String("exchange", exch.SourceName()))
-				close(in)
-			}()
-
-			if err := exch.Stream(ctx, in); err != nil {
-				slog.Error("stream ended with error",
-					slog.String("exchange", exch.SourceName()),
-					slog.String("error", err.Error()))
-			} else {
-				slog.Info("stream ended cleanly",
-					slog.String("exchange", exch.SourceName()))
-			}
-		}(exch, in)
+		// streamWithReconnect is the sole writer of `in`. It handles the initial
+		// connection and all reconnections internally. It only closes `in` when
+		// ctx is cancelled, keeping the fanOut/worker pipeline alive across
+		// any number of TCP reconnections.
+		go mp.streamWithReconnect(ctx, exch, in)
 
 		workerResult := mp.fanOut(ctx, in, exch.SourceName())
 		workersResults[index] = workerResult
@@ -92,6 +75,87 @@ func (mp *MarketProcessor) Start(ctx context.Context) {
 	}
 
 	slog.Info("market processor stopped, all goroutines complete")
+}
+
+// streamWithReconnect is the sole writer of the `in` channel for one exchange.
+// It handles both the initial connection and all subsequent reconnections after
+// a dropped TCP link, using exponential backoff capped at maxReconnectDelay.
+//
+// Design invariant: close(in) is called exactly once — via defer — only when
+// ctx is cancelled (application shutdown).  A dropped connection does NOT
+// close `in`; it triggers a re-dial so the downstream fanOut / worker pipeline
+// stays alive across reconnections without losing any in-memory batch state.
+func (mp *MarketProcessor) streamWithReconnect(ctx context.Context, exch ports.ExchangeSource, in chan domain.Ticker) {
+	defer func() {
+		slog.Info("stream goroutine exiting, closing ticker channel",
+			slog.String("exchange", exch.SourceName()))
+		close(in)
+	}()
+
+	backoff := initialReconnectDelay
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		slog.Info("dialling exchange",
+			slog.String("exchange", exch.SourceName()))
+
+		if err := exch.Dial(); err != nil {
+			slog.Error("failed to connect to exchange, will retry",
+				slog.String("exchange", exch.SourceName()),
+				slog.Duration("retry_in", backoff),
+				slog.String("error", err.Error()))
+
+			select {
+			case <-time.After(backoff):
+				backoff = min(backoff*2, maxReconnectDelay)
+			case <-ctx.Done():
+				return
+			}
+			continue
+		}
+
+		if ctx.Err() != nil {
+			_ = exch.Close()
+			return
+		}
+
+		slog.Info("connected to exchange, starting stream",
+			slog.String("exchange", exch.SourceName()))
+
+		backoff = initialReconnectDelay
+		connectedAt := time.Now()
+
+		err := exch.Stream(ctx, in)
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		if err != nil {
+			slog.Error("stream ended with error, will reconnect",
+				slog.String("exchange", exch.SourceName()),
+				slog.Duration("was_connected_for", time.Since(connectedAt)),
+				slog.Duration("retry_in", backoff),
+				slog.String("error", err.Error()))
+		} else {
+			slog.Warn("stream ended cleanly but unexpectedly, will reconnect",
+				slog.String("exchange", exch.SourceName()),
+				slog.Duration("was_connected_for", time.Since(connectedAt)),
+				slog.Duration("retry_in", backoff))
+		}
+
+		_ = exch.Close()
+
+		select {
+		case <-time.After(backoff):
+			backoff = min(backoff*2, maxReconnectDelay)
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // fanOut reads tickers from `in` and routes each one to a per-symbol worker.
