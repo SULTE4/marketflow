@@ -15,6 +15,7 @@
 - [Graceful Shutdown](#graceful-shutdown)
 - [Project Structure](#project-structure)
 - [Database Schema](#database-schema)
+- [Roadmap](#roadmap)
 
 ---
 
@@ -393,6 +394,8 @@ curl -X POST http://localhost:8080/mode/live
 {"status": "live mode activated"}
 ```
 
+> **Status:** The HTTP routes, handlers, and service-layer stubs for both endpoints are in place and respond correctly. The in-process exchange generator (`internal/adapters/secondary/exchange/generator.go`) that will actually produce synthetic ticker data when test mode is active is not yet implemented — see [Roadmap](#roadmap).
+
 ---
 
 ### Health Check
@@ -600,6 +603,65 @@ CREATE INDEX idx_aggregated_ticker_pair_exchange_time
 |---|---|---|---|
 | `latest:{exchange}:{symbol}` | Hash | 70 s | `price`, `ts` — the single most-recent tick |
 | `ts:{exchange}:{symbol}` | Sorted Set | 70 s | All ticks in the last 70 seconds; score = Unix ms |
+
+---
+
+## Roadmap
+
+### Test Mode — In-Process Exchange Generator
+
+**Status:** Planned. The API surface (`POST /mode/test`, `POST /mode/live`), HTTP handlers, and service-layer stubs are already wired end-to-end. The missing piece is the generator backend in `internal/adapters/secondary/exchange/generator.go`.
+
+#### Motivation
+
+Running the three Docker exchange simulators is a hard prerequisite for any local development or CI run today. The generator will eliminate that dependency by producing synthetic ticker events entirely in-process — no Docker, no network, no external images required.
+
+#### Planned design
+
+The generator will implement the same `ExchangeSource` port as the production TCP adapter, so the rest of the pipeline (`MarketProcessor`, `fanOut`, workers) requires zero changes:
+
+```go
+// ports/output.go — the interface the generator must satisfy
+type ExchangeSource interface {
+    Dial() error
+    Stream(ctx context.Context, out chan<- domain.Ticker) error
+    SourceName() string
+    Close() error
+}
+```
+
+Key behaviours planned for the generator:
+
+| Behaviour | Detail |
+|---|---|
+| **No external deps** | Runs entirely in memory; `Dial()` is a no-op that always succeeds |
+| **Realistic prices** | Each symbol starts from a realistic seed price and drifts via a random-walk algorithm |
+| **Configurable cadence** | Tick emission rate defaults to match the Docker simulators; adjustable for stress tests |
+| **All five symbols** | Emits ticks for `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `DOGEUSDT`, and `TONUSDT` |
+| **Hot-swap safe** | Mode switch drains the current pipeline cleanly before the new source starts; no in-memory batch state is lost |
+
+#### Development workflow once implemented
+
+Today:
+```sh
+# Must load and start three Docker containers first
+docker run -p 40101:40101 --name exchange1 -d exchange1-amd64
+docker run -p 40102:40102 --name exchange2 -d exchange2-amd64
+docker run -p 40103:40103 --name exchange3 -d exchange3-amd64
+./marketflow
+```
+
+After the generator lands:
+```sh
+# Start with synthetic data immediately — no Docker needed
+./marketflow
+
+# Optionally switch to live Docker simulators at runtime
+curl -X POST http://localhost:8080/mode/live
+
+# Switch back to generated data without restarting
+curl -X POST http://localhost:8080/mode/test
+```
 
 ---
 
