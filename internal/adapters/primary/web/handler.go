@@ -27,12 +27,28 @@ func NewHandler(marketservice ports.MarketService) *Handler {
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
-	// slog.Info("health check requested",
-	// 	slog.String("method", r.Method),
-	// 	slog.String("path", r.URL.Path),
-	// 	slog.String("remote_addr", r.RemoteAddr))
+	slog.Info("health check requested",
+		slog.String("method", r.Method),
+		slog.String("path", r.URL.Path),
+		slog.String("remote_addr", r.RemoteAddr))
+
 	result := h.marketService.Health(r.Context())
-	writeJSON(w, http.StatusOK, result)
+
+	// 200 only when every component is healthy.
+	// 503 for "degraded" (partial failure) and "down" (total failure) so that
+	// load balancers and Kubernetes probes treat any non-OK state as unhealthy.
+	statusCode := http.StatusOK
+	if !result.IsHealthy() {
+		statusCode = http.StatusServiceUnavailable
+	}
+
+	slog.Info("health check response",
+		slog.Int("http_status", statusCode),
+		slog.String("overall", result.Status),
+		slog.String("postgres", result.Postgres.Status),
+		slog.String("redis", result.Redis.Status))
+
+	writeJSON(w, statusCode, result)
 }
 
 func (h *Handler) HandleLatestPrice(w http.ResponseWriter, r *http.Request) {

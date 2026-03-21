@@ -27,17 +27,58 @@ func New(repo ports.TickerRepository, cache ports.TickerCache, exch []ports.Exch
 	}
 }
 
-func (s *Service) Health(ctx context.Context) error {
+// Health checks PostgreSQL and Redis independently and always returns a
+// *domain.HealthResult describing the status of each component.
+//
+// Critically, both components are checked even when the first one fails, so
+// the caller always receives the full picture.  The overall Status field is:
+//   - "ok"       – every component is healthy
+//   - "degraded" – at least one component is down but not all
+//   - "down"     – every component is down
+func (s *Service) Health(ctx context.Context) *domain.HealthResult {
+	slog.Info("performing health check")
+
+	result := &domain.HealthResult{}
+	downCount := 0
+
+	// ── PostgreSQL ────────────────────────────────────────────────────────────
 	if err := s.repo.Ping(ctx); err != nil {
-		slog.Error("repository health check failed", slog.String("error", err.Error()))
-		return err
+		slog.Error("postgres health check failed", slog.String("error", err.Error()))
+		result.Postgres = domain.ComponentHealth{
+			Status:  domain.StatusDown,
+			Message: err.Error(),
+		}
+		downCount++
+	} else {
+		slog.Info("postgres health check passed")
+		result.Postgres = domain.ComponentHealth{Status: domain.StatusOK}
 	}
 
+	// ── Redis ─────────────────────────────────────────────────────────────────
 	if err := s.cache.Ping(ctx); err != nil {
-		slog.Error("cache health check failed", slog.String("error", err.Error()))
-		return err
+		slog.Error("redis health check failed", slog.String("error", err.Error()))
+		result.Redis = domain.ComponentHealth{
+			Status:  domain.StatusDown,
+			Message: err.Error(),
+		}
+		downCount++
+	} else {
+		slog.Info("redis health check passed")
+		result.Redis = domain.ComponentHealth{Status: domain.StatusOK}
 	}
-	return nil
+
+	// ── Overall status ────────────────────────────────────────────────────────
+	switch downCount {
+	case 0:
+		result.Status = domain.StatusOK
+	case 2:
+		result.Status = domain.StatusDown
+	default:
+		result.Status = domain.StatusDegraded
+	}
+
+	slog.Info("health check completed", slog.String("status", result.Status))
+	return result
 }
 
 func (s *Service) GetLatestPrice(ctx context.Context, exchange, symbol string) (*domain.Ticker, error) {
