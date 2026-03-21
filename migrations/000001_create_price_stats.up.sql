@@ -6,7 +6,7 @@ CREATE TABLE aggregated_ticker (
     average_price NUMERIC(20, 8)         NOT NULL,
     min_price    NUMERIC(20, 8)          NOT NULL,
     max_price    NUMERIC(20, 8)          NOT NULL,
-
+    count INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (id)
 );
 

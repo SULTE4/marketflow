@@ -5,6 +5,8 @@ import "net/http"
 func New(h *Handler) http.Handler {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /health", h.Health)
+
 	mux.HandleFunc("GET /prices/latest/{symbol}", h.HandleLatestPrice)
 	mux.HandleFunc("GET /prices/latest/{exchange}/{symbol}", h.HandleLatestPrice)
 

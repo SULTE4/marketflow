@@ -258,6 +258,13 @@ func (mp *MarketProcessor) worker(ctx context.Context, in <-chan domain.Ticker, 
 					slog.String("error", err.Error()))
 			}
 
+			if err := mp.cache.AddToTimeSeries(ctx, &pair); err != nil {
+				slog.Error("failed to add ticker to time-series",
+					slog.String("symbol", pair.Symbol),
+					slog.String("exchange", exchName),
+					slog.String("error", err.Error()))
+			}
+
 		case <-ticker.C:
 			if batched.Count > 0 {
 				batched.Avg = batched.Sum / float64(batched.Count)

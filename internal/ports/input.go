@@ -7,7 +7,7 @@ import (
 )
 
 type MarketService interface {
-	Health(ctx context.Context) error
+	Health(ctx context.Context) *domain.HealthResult
 	GetLatestPrice(ctx context.Context, exchange, symbol string) (*domain.Ticker, error)
 	GetHighestPrice(ctx context.Context, exchange, symbol string, period int64) (*domain.Ticker, error)
 	GetLowestPrice(ctx context.Context, exchange, symbol string, period int64) (*domain.Ticker, error)

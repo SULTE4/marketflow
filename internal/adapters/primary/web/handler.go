@@ -27,22 +27,23 @@ func NewHandler(marketservice ports.MarketService) *Handler {
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
-	slog.Info("health check requested",
-		slog.String("method", r.Method),
-		slog.String("path", r.URL.Path),
-		slog.String("remote_addr", r.RemoteAddr))
-	w.WriteHeader(http.StatusOK)
+	// slog.Info("health check requested",
+	// 	slog.String("method", r.Method),
+	// 	slog.String("path", r.URL.Path),
+	// 	slog.String("remote_addr", r.RemoteAddr))
+	result := h.marketService.Health(r.Context())
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) HandleLatestPrice(w http.ResponseWriter, r *http.Request) {
 	symbol := r.PathValue("symbol")
 	exchange := r.PathValue("exchange")
 
-	slog.Info("latest price request received",
-		slog.String("symbol", symbol),
-		slog.String("exchange", exchange),
-		slog.String("method", r.Method),
-		slog.String("path", r.URL.Path))
+	// slog.Info("latest price request received",
+	// 	slog.String("symbol", symbol),
+	// 	slog.String("exchange", exchange),
+	// 	slog.String("method", r.Method),
+	// 	slog.String("path", r.URL.Path))
 
 	ticker, err := h.marketService.GetLatestPrice(r.Context(), exchange, symbol)
 	if err != nil {
@@ -54,10 +55,10 @@ func (h *Handler) HandleLatestPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("latest price request completed",
-		slog.String("symbol", symbol),
-		slog.String("exchange", exchange),
-		slog.Any("ticker", ticker))
+	// slog.Info("latest price request completed",
+	// 	slog.String("symbol", symbol),
+	// 	slog.String("exchange", exchange),
+	// 	slog.Any("ticker", ticker))
 	writeJSON(w, http.StatusOK, ticker)
 }
 
@@ -97,11 +98,11 @@ func (h *Handler) HandleLowestPrice(w http.ResponseWriter, r *http.Request) {
 	exchange := r.PathValue("exchange")
 	period := r.URL.Query().Get("period")
 
-	slog.Info("lowest price request received",
-		slog.String("symbol", symbol),
-		slog.String("exchange", exchange),
-		slog.String("period", period),
-		slog.String("method", r.Method))
+	// slog.Info("lowest price request received",
+	// 	slog.String("symbol", symbol),
+	// 	slog.String("exchange", exchange),
+	// 	slog.String("period", period),
+	// 	slog.String("method", r.Method))
 
 	duration, _ := time.ParseDuration(period)
 
@@ -128,11 +129,11 @@ func (h *Handler) HandleAveragePrice(w http.ResponseWriter, r *http.Request) {
 	exchange := r.PathValue("exchange")
 	period := r.URL.Query().Get("period")
 
-	slog.Info("average price request received",
-		slog.String("symbol", symbol),
-		slog.String("exchange", exchange),
-		slog.String("period", period),
-		slog.String("method", r.Method))
+	// slog.Info("average price request received",
+	// 	slog.String("symbol", symbol),
+	// 	slog.String("exchange", exchange),
+	// 	slog.String("period", period),
+	// 	slog.String("method", r.Method))
 
 	duration, _ := time.ParseDuration(period)
 
@@ -155,10 +156,10 @@ func (h *Handler) HandleAveragePrice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) HandleModeTest(w http.ResponseWriter, r *http.Request) {
-	slog.Info("switching to test mode",
-		slog.String("method", r.Method),
-		slog.String("path", r.URL.Path),
-		slog.String("remote_addr", r.RemoteAddr))
+	// slog.Info("switching to test mode",
+	// 	slog.String("method", r.Method),
+	// 	slog.String("path", r.URL.Path),
+	// 	slog.String("remote_addr", r.RemoteAddr))
 
 	h.marketService.ModeTest()
 
@@ -168,10 +169,10 @@ func (h *Handler) HandleModeTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) HandleModeLive(w http.ResponseWriter, r *http.Request) {
-	slog.Info("switching to live mode",
-		slog.String("method", r.Method),
-		slog.String("path", r.URL.Path),
-		slog.String("remote_addr", r.RemoteAddr))
+	// slog.Info("switching to live mode",
+	// 	slog.String("method", r.Method),
+	// 	slog.String("path", r.URL.Path),
+	// 	slog.String("remote_addr", r.RemoteAddr))
 
 	h.marketService.ModeLive()
 
