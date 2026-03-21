@@ -15,9 +15,9 @@ type TickerCache interface {
 
 type TickerRepository interface {
 	Save(ctx context.Context, ticker *domain.AggregatedTicker) error
-	GetMaximum(ctx context.Context, f *domain.TickerFilter) (float32, error)
-	GetMinimum(ctx context.Context, f *domain.TickerFilter) (float32, error)
-	GetAverage(ctx context.Context, f *domain.TickerFilter) (float32, error)
+	GetMaximum(ctx context.Context, f *domain.TickerFilter) (*domain.Ticker, error)
+	GetMinimum(ctx context.Context, f *domain.TickerFilter) (*domain.Ticker, error)
+	GetAverage(ctx context.Context, f *domain.TickerFilter) (*domain.Ticker, error)
 	Ping(ctx context.Context) error
 }
 

@@ -54,12 +54,11 @@ func (h *Handler) HandleLatestPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := TickerResponse{Symbol: symbol, Source: exchange, Price: ticker.Price, Timestamp: time.UnixMilli(ticker.Timestamp)}
 	slog.Info("latest price request completed",
 		slog.String("symbol", symbol),
 		slog.String("exchange", exchange),
-		slog.Float64("price", float64(ticker.Price)))
-	writeJSON(w, http.StatusOK, response)
+		slog.Any("ticker", ticker))
+	writeJSON(w, http.StatusOK, ticker)
 }
 
 func (h *Handler) HandleHighestPrice(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +74,7 @@ func (h *Handler) HandleHighestPrice(w http.ResponseWriter, r *http.Request) {
 
 	duration, _ := time.ParseDuration(period)
 
-	price, err := h.marketService.GetHighestPrice(r.Context(), exchange, symbol, int64(duration.Seconds()))
+	ticker, err := h.marketService.GetHighestPrice(r.Context(), exchange, symbol, int64(duration.Seconds()))
 	if err != nil {
 		if errors.Is(err, domain.ErrNoData) {
 			writeJSON(w, http.StatusOK, nil)
@@ -90,12 +89,7 @@ func (h *Handler) HandleHighestPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := TickerResponse{Symbol: symbol, Source: exchange, Price: price}
-	slog.Info("highest price request completed",
-		slog.String("symbol", symbol),
-		slog.String("exchange", exchange),
-		slog.Float64("price", float64(price)))
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, ticker)
 }
 
 func (h *Handler) HandleLowestPrice(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +105,7 @@ func (h *Handler) HandleLowestPrice(w http.ResponseWriter, r *http.Request) {
 
 	duration, _ := time.ParseDuration(period)
 
-	price, err := h.marketService.GetLowestPrice(r.Context(), exchange, symbol, int64(duration.Seconds()))
+	ticker, err := h.marketService.GetLowestPrice(r.Context(), exchange, symbol, int64(duration.Seconds()))
 	if err != nil {
 		if errors.Is(err, domain.ErrNoData) {
 			writeJSON(w, http.StatusOK, nil)
@@ -126,12 +120,7 @@ func (h *Handler) HandleLowestPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := TickerResponse{Symbol: symbol, Source: exchange, Price: price}
-	slog.Info("lowest price request completed",
-		slog.String("symbol", symbol),
-		slog.String("exchange", exchange),
-		slog.Float64("price", float64(price)))
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, ticker)
 }
 
 func (h *Handler) HandleAveragePrice(w http.ResponseWriter, r *http.Request) {
@@ -147,7 +136,7 @@ func (h *Handler) HandleAveragePrice(w http.ResponseWriter, r *http.Request) {
 
 	duration, _ := time.ParseDuration(period)
 
-	price, err := h.marketService.GetAveragePrice(r.Context(), exchange, symbol, int64(duration.Seconds()))
+	ticker, err := h.marketService.GetAveragePrice(r.Context(), exchange, symbol, int64(duration.Seconds()))
 	if err != nil {
 		if errors.Is(err, domain.ErrNoData) {
 			writeJSON(w, http.StatusOK, nil)
@@ -162,12 +151,7 @@ func (h *Handler) HandleAveragePrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := TickerResponse{Symbol: symbol, Source: exchange, Price: price}
-	slog.Info("average price request completed",
-		slog.String("symbol", symbol),
-		slog.String("exchange", exchange),
-		slog.Float64("price", float64(price)))
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, ticker)
 }
 
 func (h *Handler) HandleModeTest(w http.ResponseWriter, r *http.Request) {

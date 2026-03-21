@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -52,7 +53,7 @@ func (r *Repository) Save(ctx context.Context, ticker *domain.AggregatedTicker) 
 	return nil
 }
 
-func (r *Repository) GetMaximum(ctx context.Context, f *domain.TickerFilter) (float32, error) {
+func (r *Repository) GetMaximum(ctx context.Context, f *domain.TickerFilter) (*domain.Ticker, error) {
 	start := time.Now()
 
 	// slog.Info("querying maximum price",
@@ -60,11 +61,10 @@ func (r *Repository) GetMaximum(ctx context.Context, f *domain.TickerFilter) (fl
 	// 	slog.String("exchange", f.Source),
 	// 	slog.Int64("period_seconds", f.Period))
 
-	query := `SELECT MAX(max_price) from
-			(SELECT max_price from aggregated_ticker
+	query := `SELECT max_price, timestamp from aggregated_ticker
 			WHERE pair_name = $1`
 
-	args := []interface{}{f.Symbol}
+	args := []any{f.Symbol}
 
 	if f.Source != "" {
 		query += " AND exchange = $2"
@@ -76,24 +76,28 @@ func (r *Repository) GetMaximum(ctx context.Context, f *domain.TickerFilter) (fl
 		args = append(args, f.Period)
 	}
 
-	query += " );"
+	query += " ORDER BY max_price DESC LIMIT 1;"
 
 	row := r.db.QueryRowContext(ctx, query, args...)
 	var val sql.NullFloat64
-	if err := row.Scan(&val); err != nil {
+	var ts time.Time
+	if err := row.Scan(&val, &ts); err != nil {
 		slog.Error("failed to query maximum price",
 			slog.String("symbol", f.Symbol),
 			slog.String("exchange", f.Source),
 			slog.String("error", err.Error()),
 			slog.Duration("duration", time.Since(start)))
-		return 0, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrTickerNotFound
+		}
+		return nil, err
 	}
 	if !val.Valid {
 		slog.Warn("no data found for maximum price query",
 			slog.String("symbol", f.Symbol),
 			slog.String("exchange", f.Source),
 			slog.Duration("duration", time.Since(start)))
-		return 0, domain.ErrNoData
+		return nil, domain.ErrNoData
 	}
 
 	// slog.Info("maximum price retrieved successfully",
@@ -102,10 +106,10 @@ func (r *Repository) GetMaximum(ctx context.Context, f *domain.TickerFilter) (fl
 	// 	slog.Float64("max_price", val.Float64),
 	// 	slog.Duration("duration", time.Since(start)))
 
-	return float32(val.Float64), nil
+	return &domain.Ticker{Symbol: f.Symbol, Source: f.Source, Price: float32(val.Float64), Timestamp: ts.Unix()}, nil
 }
 
-func (r *Repository) GetMinimum(ctx context.Context, f *domain.TickerFilter) (float32, error) {
+func (r *Repository) GetMinimum(ctx context.Context, f *domain.TickerFilter) (*domain.Ticker, error) {
 	start := time.Now()
 
 	// slog.Info("querying minimum price",
@@ -113,11 +117,10 @@ func (r *Repository) GetMinimum(ctx context.Context, f *domain.TickerFilter) (fl
 	// 	slog.String("exchange", f.Source),
 	// 	slog.Int64("period_seconds", f.Period))
 
-	query := `SELECT MIN(min_price) from
-			(SELECT min_price from aggregated_ticker
+	query := `SELECT min_price, timestamp from aggregated_ticker
 			WHERE pair_name = $1`
 
-	args := []interface{}{f.Symbol}
+	args := []any{f.Symbol}
 
 	if f.Source != "" {
 		query += " AND exchange = $2"
@@ -129,24 +132,28 @@ func (r *Repository) GetMinimum(ctx context.Context, f *domain.TickerFilter) (fl
 		args = append(args, f.Period)
 	}
 
-	query += " );"
+	query += " ORDER BY min_price ASC LIMIT 1;"
 
 	row := r.db.QueryRowContext(ctx, query, args...)
 	var val sql.NullFloat64
-	if err := row.Scan(&val); err != nil {
+	var ts time.Time
+	if err := row.Scan(&val, &ts); err != nil {
 		slog.Error("failed to query minimum price",
 			slog.String("symbol", f.Symbol),
 			slog.String("exchange", f.Source),
 			slog.String("error", err.Error()),
 			slog.Duration("duration", time.Since(start)))
-		return 0, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrTickerNotFound
+		}
+		return nil, err
 	}
 	if !val.Valid {
 		slog.Warn("no data found for minimum price query",
 			slog.String("symbol", f.Symbol),
 			slog.String("exchange", f.Source),
 			slog.Duration("duration", time.Since(start)))
-		return 0, domain.ErrNoData
+		return nil, domain.ErrNoData
 	}
 
 	// slog.Info("minimum price retrieved successfully",
@@ -155,10 +162,10 @@ func (r *Repository) GetMinimum(ctx context.Context, f *domain.TickerFilter) (fl
 	// 	slog.Float64("min_price", val.Float64),
 	// 	slog.Duration("duration", time.Since(start)))
 
-	return float32(val.Float64), nil
+	return &domain.Ticker{Symbol: f.Symbol, Source: f.Source, Price: float32(val.Float64), Timestamp: ts.Unix()}, nil
 }
 
-func (r *Repository) GetAverage(ctx context.Context, f *domain.TickerFilter) (float32, error) {
+func (r *Repository) GetAverage(ctx context.Context, f *domain.TickerFilter) (*domain.Ticker, error) {
 	start := time.Now()
 
 	// slog.Info("querying average price",
@@ -170,7 +177,7 @@ func (r *Repository) GetAverage(ctx context.Context, f *domain.TickerFilter) (fl
 			(SELECT average_price from aggregated_ticker
 			WHERE pair_name = $1`
 
-	args := []interface{}{f.Symbol}
+	args := []any{f.Symbol}
 
 	if f.Source != "" {
 		query += " AND exchange = $2"
@@ -192,14 +199,17 @@ func (r *Repository) GetAverage(ctx context.Context, f *domain.TickerFilter) (fl
 			slog.String("exchange", f.Source),
 			slog.String("error", err.Error()),
 			slog.Duration("duration", time.Since(start)))
-		return 0, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrTickerNotFound
+		}
+		return nil, err
 	}
 	if !val.Valid {
 		slog.Warn("no data found for average price query",
 			slog.String("symbol", f.Symbol),
 			slog.String("exchange", f.Source),
 			slog.Duration("duration", time.Since(start)))
-		return 0, domain.ErrNoData
+		return nil, domain.ErrNoData
 	}
 
 	// slog.Info("average price retrieved successfully",
@@ -208,7 +218,7 @@ func (r *Repository) GetAverage(ctx context.Context, f *domain.TickerFilter) (fl
 	// 	slog.Float64("avg_price", val.Float64),
 	// 	slog.Duration("duration", time.Since(start)))
 
-	return float32(val.Float64), nil
+	return &domain.Ticker{Symbol: f.Symbol, Source: f.Source, Price: float32(val.Float64)}, nil
 }
 
 func (r *Repository) Ping(ctx context.Context) error {

@@ -3,10 +3,10 @@ package domain
 import "fmt"
 
 type Ticker struct {
-	Symbol    string  `json:"Symbol"`
-	Source    string  `json:"Source"`
+	Symbol    string  `json:"symbol"`
+	Source    string  `json:"source,omitempty"`
 	Price     float32 `json:"price"`
-	Timestamp int64   `json:"timestamp"`
+	Timestamp int64   `json:"timestamp,omitzero"`
 }
 
 type TickerFilter struct {
