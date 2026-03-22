@@ -46,7 +46,7 @@ func (s *Service) Health(ctx context.Context) *domain.HealthResult {
 		slog.Error("postgres health check failed", slog.String("error", err.Error()))
 		result.Postgres = domain.ComponentHealth{
 			Status:  domain.StatusDown,
-			Message: err.Error(),
+			Message: domain.ErrInternalError.Error(),
 		}
 		downCount++
 	} else {
@@ -59,7 +59,7 @@ func (s *Service) Health(ctx context.Context) *domain.HealthResult {
 		slog.Error("redis health check failed", slog.String("error", err.Error()))
 		result.Redis = domain.ComponentHealth{
 			Status:  domain.StatusDown,
-			Message: err.Error(),
+			Message: domain.ErrInternalError.Error(),
 		}
 		downCount++
 	} else {

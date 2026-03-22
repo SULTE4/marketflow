@@ -407,7 +407,7 @@ GET /health
 ```sh
 curl http://localhost:8080/health
 ```
-
+<!---->
 Returns `200 OK` when all components are healthy:
 
 ```json
@@ -429,7 +429,7 @@ Returns `503 Service Unavailable` when any component is degraded:
     "postgres": { "status": "ok" },
     "redis": {
       "status": "down",
-      "message": "dial tcp [::1]:6379: connect: connection refused"
+      "message": "internal error"
     }
   }
 }

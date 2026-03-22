@@ -333,13 +333,13 @@ func (mp *MarketProcessor) worker(ctx context.Context, in <-chan domain.Ticker, 
 			if batched.Count > 0 {
 				batched.Avg = batched.Sum / float64(batched.Count)
 
-				slog.Info("saving periodic batched ticker data",
-					slog.String("symbol", batched.Symbol),
-					slog.String("exchange", exchName),
-					slog.Int("count", batched.Count),
-					slog.Float64("avg", batched.Avg),
-					slog.Float64("min", float64(batched.Min)),
-					slog.Float64("max", float64(batched.Max)))
+				// slog.Info("saving periodic batched ticker data",
+				// 	slog.String("symbol", batched.Symbol),
+				// 	slog.String("exchange", exchName),
+				// 	slog.Int("count", batched.Count),
+				// 	slog.Float64("avg", batched.Avg),
+				// 	slog.Float64("min", float64(batched.Min)),
+				// 	slog.Float64("max", float64(batched.Max)))
 
 				if err := mp.repo.Save(ctx, batched); err != nil {
 					slog.Error("failed to save ticker to repository",
